@@ -1,0 +1,339 @@
+-- =================================================================================
+-- TAREA FINAL SQL - SMART DESK
+-- ALUMNO: Alie Fia Ayu Kusuma Ranti
+-- =================================================================================
+
+-- ---------------------------------------------------------------------------------
+-- PRE-ANÁLISIS: LIMPIEZA Y PREPARACIÓN DE DATOS
+-- ---------------------------------------------------------------------------------
+
+USE WAREHOUSE finch_wh;
+USE ROLE training_role;
+USE DATABASE UCM;
+USE SCHEMA SMART_Desk;
+
+--Familiarizarse con el table
+
+--Comprobando el tipo de datos
+DESCRIBE TABLE ACCOUNTS;
+DESCRIBE TABLE FORECASTS;
+DESCRIBE TABLE SALES;
+DESCRIBE TABLE TARGETS;
+
+SELECT * FROM ACCOUNTS; --188 rows
+SELECT * FROM FORECASTS; --135 rows
+SELECT * FROM SALES; --14.5k rows
+SELECT * FROM TARGETS; --12 rows
+
+--Limpio sin duplicados y nulo
+
+SELECT DISTINCT * FROM ACCOUNTS --188 rows
+WHERE
+    ACCOUNT IS NOT NULL
+    AND ACCOUNT_EXECUTIVE IS NOT NULL
+    AND ACCOUNT_LEVEL IS NOT NULL
+    AND CONTACT_EMAIL IS NOT NULL
+    AND COUNTRY IS NOT NULL
+    AND INDUSTRY IS NOT NULL
+    AND REGION IS NOT NULL;
+
+SELECT DISTINCT * FROM FORECASTS --135 rows
+WHERE
+    ACCOUNT IS NOT NULL
+    AND CATEGORY IS NOT NULL
+    AND PREDICTION_CATEGORY IS NOT NULL
+    AND FORECAST IS NOT NULL
+    AND OPPORTUNITY_AGE IS NOT NULL
+    AND YEAR IS NOT NULL;
+
+SELECT DISTINCT * FROM SALES --14.3k rows
+WHERE
+    ACCOUNT IS NOT NULL
+    AND CATEGORY IS NOT NULL
+    AND DATE IS NOT NULL
+    AND DAY_NAME IS NOT NULL
+    AND MAINTENANCE IS NOT NULL
+    AND PARTS IS NOT NULL
+    AND PRODUCT IS NOT NULL
+    AND PROFIT IS NOT NULL
+    AND SUPPORT IS NOT NULL
+    AND TOTAL IS NOT NULL
+    AND UNITS_SOLD IS NOT NULL
+    AND YEAR IS NOT NULL
+    AND QUARTER IS NOT NULL;
+
+--Encuentra la duplicación
+SELECT *, COUNT(*)
+FROM SALES
+GROUP BY ALL -- Acceso directo en Snowflake para agrupar por cada columna
+HAVING COUNT(*) > 1; --Sin duplicación
+
+--Encontrar el nulo
+SELECT * FROM SALES
+WHERE
+    ACCOUNT IS NULL
+    OR CATEGORY IS NULL
+    OR DATE IS NULL
+    OR DAY_NAME IS NULL
+    OR MAINTENANCE IS NULL
+    OR PARTS IS NULL
+    OR PRODUCT IS NULL
+    OR PROFIT IS NULL
+    OR SUPPORT IS NULL --184 null in support
+    OR TOTAL IS NULL
+    OR UNITS_SOLD IS NULL
+    OR YEAR IS NULL
+    OR QUARTER IS NULL;   
+
+--convierte null en 0 y crea una vista de tabla limpia
+CREATE OR REPLACE VIEW CLEANED_SALES AS
+SELECT
+    ACCOUNT,
+    CATEGORY,
+    DATE,
+    DAY_NAME,
+    MAINTENANCE,
+    PARTS,
+    PRODUCT,
+    PROFIT,
+    COALESCE(SUPPORT, 0) AS SUPPORT, --Convertir nulo en 0
+    TOTAL,
+    UNITS_SOLD,
+    YEAR,
+    QUARTER
+FROM SALES;
+
+-- ---------------------------------------------------------------------------------
+-- 1. Análisis de Ventas y Beneficio por Categoría de Producto
+-- ---------------------------------------------------------------------------------
+--hay 182 ventas en total
+SELECT
+    CATEGORY AS "Categoria",
+    MAINTENANCE AS "Mantenimiento",
+    PRODUCT AS "Producto",
+    PARTS AS "Partes",
+    SUPPORT AS "Suporte",
+    TOTAL AS "Total Ventas",
+    UNITS_SOLD AS "Unidades Vendidas",
+    PROFIT AS "Beneficio Total"
+FROM CLEANED_SALES
+WHERE ACCOUNT = 'Adabs Entertainment' AND YEAR = 2020;
+
+--Agrupar por categoría
+SELECT
+    CATEGORY AS "Categoria",
+    SUM(MAINTENANCE) AS "Mantenimiento",
+    SUM(PRODUCT) AS "Producto",
+    SUM(PARTS) AS "Partes",
+    SUM(SUPPORT) AS "Suporte",
+    SUM(TOTAL) AS "Total Ventas",
+    SUM(UNITS_SOLD) AS "Unidades Vendidas",
+    SUM(PROFIT) AS "Beneficio Total"
+FROM CLEANED_SALES
+WHERE ACCOUNT = 'Adabs Entertainment' AND YEAR = 2020
+GROUP BY CATEGORY;
+
+-- 'to_varchar' para que sea más fácil de leer y analizar.
+SELECT
+    CATEGORY AS "Categoria",
+    TO_VARCHAR(SUM(MAINTENANCE), '999,999,999') AS "Mantenimiento",
+    TO_VARCHAR(SUM(PRODUCT), '999,999,999') AS "Producto",
+    TO_VARCHAR(SUM(PARTS), '999,999,999') AS "Partes",
+    TO_VARCHAR(SUM(SUPPORT), '999,999,999') AS "Suporte",
+    TO_VARCHAR(SUM(TOTAL), '999,999,999') AS "Total Ventas",
+    TO_VARCHAR(SUM(UNITS_SOLD), '999,999,999') AS "Unidades Vendidas",
+    TO_VARCHAR(SUM(PROFIT), '999,999,999') AS "Beneficio Total"
+FROM CLEANED_SALES
+WHERE ACCOUNT = 'Adabs Entertainment' AND YEAR = 2020
+GROUP BY CATEGORY;
+
+-- ---------------------------------------------------------------------------------
+-- 2. Comparación de Rendimiento por País en Regiones APAC y EMEA
+-- ---------------------------------------------------------------------------------
+SELECT
+    ACCOUNTS.REGION AS "Region",
+    ACCOUNTS.COUNTRY AS "Pais",
+    AVG(TOTAL) AS "Ingreso Promedio",
+    AVG(UNITS_SOLD) AS "Unidades Vendidas Promedio",
+    AVG(PROFIT) AS "Beneficio Promedio"
+FROM ACCOUNTS INNER JOIN CLEANED_SALES
+ON ACCOUNTS.ACCOUNT = CLEANED_SALES.ACCOUNT
+WHERE ACCOUNTS.REGION IN ('APAC', 'EMEA')
+GROUP BY ACCOUNTS.REGION, ACCOUNTS.COUNTRY
+ORDER BY "Ingreso Promedio" DESC;
+
+-- 'to_varchar' para que sea más fácil de leer y analizar.
+SELECT
+    ACCOUNTS.REGION AS "Region",
+    ACCOUNTS.COUNTRY AS "Pais",
+    TO_VARCHAR(AVG(TOTAL), '999,999,990') AS "Ingreso Promedio",
+    TO_VARCHAR(AVG(UNITS_SOLD), '999,999,990') AS "Unidades Vendidas Promedio",
+    TO_VARCHAR(AVG(PROFIT), '999,999,990') AS "Beneficio Promedio"
+FROM ACCOUNTS INNER JOIN CLEANED_SALES
+ON ACCOUNTS.ACCOUNT = CLEANED_SALES.ACCOUNT
+WHERE ACCOUNTS.REGION IN ('APAC', 'EMEA')
+GROUP BY ACCOUNTS.REGION, ACCOUNTS.COUNTRY
+ORDER BY "Ingreso Promedio" DESC;
+
+-- ---------------------------------------------------------------------------------
+-- 3. Análisis del Beneficio Factorizado por Industria
+-- ---------------------------------------------------------------------------------
+SELECT 
+    ACCOUNTS.INDUSTRY AS "INDUSTRY",
+    SUM(CLEANED_SALES.PROFIT) AS "TOTAL_PROFIT",
+    CASE 
+        WHEN SUM(CLEANED_SALES.PROFIT) > 1000000 THEN 'Alto'
+        ELSE 'Normal'
+    END AS "BENEFIT_CATEGORY"
+FROM ACCOUNTS 
+INNER JOIN CLEANED_SALES ON ACCOUNTS.ACCOUNT = CLEANED_SALES.ACCOUNT
+WHERE ACCOUNTS.ACCOUNT IN (
+    SELECT ACCOUNT 
+    FROM FORECASTS 
+    WHERE PREDICTION_CATEGORY = 'Commit'
+    GROUP BY ACCOUNT
+    HAVING SUM(FORECAST) > 500000
+)
+GROUP BY ACCOUNTS.INDUSTRY
+ORDER BY "TOTAL_PROFIT" DESC;
+
+-- 'to_varchar' para que sea más fácil de leer y analizar.
+SELECT 
+    ACCOUNTS.INDUSTRY AS "INDUSTRY",
+    TO_VARCHAR(SUM(CLEANED_SALES.PROFIT), '999,999,999') AS "TOTAL_PROFIT",
+    CASE 
+        WHEN SUM(CLEANED_SALES.PROFIT) > 1000000 THEN 'Alto'
+        ELSE 'Normal'
+    END AS "BENEFIT_CATEGORY"
+FROM ACCOUNTS 
+INNER JOIN CLEANED_SALES ON ACCOUNTS.ACCOUNT = CLEANED_SALES.ACCOUNT
+WHERE ACCOUNTS.ACCOUNT IN (
+    SELECT ACCOUNT 
+    FROM FORECASTS 
+    WHERE PREDICTION_CATEGORY = 'Commit'
+    GROUP BY ACCOUNT
+    HAVING SUM(FORECAST) > 500000
+)
+GROUP BY ACCOUNTS.INDUSTRY
+ORDER BY "TOTAL_PROFIT" DESC;
+
+-- ---------------------------------------------------------------------------------
+-- 4. Análisis Trimestral Real vs Target (2019-2021)
+-- ---------------------------------------------------------------------------------
+SELECT
+    CLEANED_SALES.YEAR,
+    CLEANED_SALES.QUARTER AS "Quarter_of_Year",
+    SUM(CLEANED_SALES.TOTAL) AS "Total_Real_Sales",
+    SUM(CLEANED_SALES.PROFIT) AS "Total_Real_Profit",
+    TARGET_TOTAL,
+    TARGET_PROFIT,
+    (SUM(CLEANED_SALES.TOTAL) - TARGETS.TARGET_TOTAL) AS "Variacion_Ventas",
+    (SUM(CLEANED_SALES.PROFIT) - TARGETS.TARGET_PROFIT) AS "Variacion_Beneficio"
+FROM CLEANED_SALES INNER JOIN TARGETS
+ON CLEANED_SALES.YEAR = TARGETS.YEAR AND CLEANED_SALES.QUARTER = TARGETS.QUARTER_OF_YEAR
+WHERE CLEANED_SALES.YEAR BETWEEN 2019 AND 2021
+GROUP BY CLEANED_SALES.YEAR, CLEANED_SALES.QUARTER, TARGETS.TARGET_TOTAL, TARGETS.TARGET_PROFIT
+ORDER BY CLEANED_SALES.YEAR, CLEANED_SALES.QUARTER;
+
+-- 'to_varchar' para que sea más fácil de leer y analizar.
+SELECT
+    CLEANED_SALES.YEAR,
+    CLEANED_SALES.QUARTER AS "Quarter_of_Year",
+    TO_VARCHAR(SUM(CLEANED_SALES.TOTAL), '999,999,990') AS "Total_Real_Sales",
+    TO_VARCHAR(SUM(CLEANED_SALES.PROFIT), '999,999,990') AS "Total_Real_Profit",
+    TARGET_TOTAL,
+    TARGET_PROFIT,
+    TO_VARCHAR(SUM(CLEANED_SALES.TOTAL) - TARGETS.TARGET_TOTAL, '999,999,990') AS "Variacion_Ventas",
+    TO_VARCHAR(SUM(CLEANED_SALES.PROFIT) - TARGETS.TARGET_PROFIT, '999,999,990') AS "Variacion_Beneficio"
+FROM CLEANED_SALES INNER JOIN TARGETS
+ON CLEANED_SALES.YEAR = TARGETS.YEAR AND CLEANED_SALES.QUARTER = TARGETS.QUARTER_OF_YEAR
+WHERE CLEANED_SALES.YEAR BETWEEN 2019 AND 2021
+GROUP BY CLEANED_SALES.YEAR, CLEANED_SALES.QUARTER, TARGETS.TARGET_TOTAL, TARGETS.TARGET_PROFIT
+ORDER BY CLEANED_SALES.YEAR, CLEANED_SALES.QUARTER;
+
+-- =================================================================================
+-- CASO PRÁCTICO: ANÁLISIS LIBRE (Opción 2: Industrias Más Rentables)
+-- =================================================================================
+/*
+Pregunta de Negocio: ¿Qué industrias generan el mayor beneficio y cuáles tienen 
+un alto volumen de ventas pero bajos márgenes?
+*/
+
+-- Toda la historia
+SELECT 
+    ACCOUNTS.INDUSTRY,
+    TO_VARCHAR(SUM(CLEANED_SALES.PROFIT), '999,999,999') AS "Total Profit", --Beneficio en número entero con formato numérico para mayor claridad
+    TO_VARCHAR(SUM(CLEANED_SALES.TOTAL), '999,999,999') AS "Total Sales", --Ventas en números enteros con formato numérico para mayor claridad
+    ROUND((SUM(CLEANED_SALES.PROFIT) / NULLIF(SUM(CLEANED_SALES.TOTAL), 0)) * 100, 1) AS "Margin %", --1 digit decimal
+    CASE 
+        WHEN (SUM(CLEANED_SALES.PROFIT) / NULLIF(SUM(CLEANED_SALES.TOTAL), 0)) * 100 >= 36.0 THEN 'High'
+        WHEN (SUM(CLEANED_SALES.PROFIT) / NULLIF(SUM(CLEANED_SALES.TOTAL), 0)) * 100 >= 33.0 THEN 'Medium'
+        ELSE 'Low'
+    END AS "Margin Tier"
+FROM CLEANED_SALES INNER JOIN ACCOUNTS
+ON CLEANED_SALES.ACCOUNT = ACCOUNTS.ACCOUNT
+GROUP BY ACCOUNTS.INDUSTRY
+ORDER BY "Total Profit" DESC;
+
+--2019
+SELECT 
+    A.INDUSTRY,
+    -- Utilice COALESCE para convertir NULL en 0 antes de formatear.
+    TO_VARCHAR(COALESCE(SUM(S.PROFIT), 0), '999,999,999') AS "Total Profit",
+    TO_VARCHAR(COALESCE(SUM(S.TOTAL), 0), '999,999,999') AS "Total Sales",
+    -- Calcular margen
+    ROUND(COALESCE((SUM(S.PROFIT) / NULLIF(SUM(S.TOTAL), 0)) * 100, 0), 1) AS "Margin %",
+    CASE 
+        WHEN (SUM(S.PROFIT) / NULLIF(SUM(S.TOTAL), 0)) * 100 >= 36.0 THEN 'High'
+        WHEN (SUM(S.PROFIT) / NULLIF(SUM(S.TOTAL), 0)) * 100 >= 33.0 THEN 'Medium'
+        ELSE 'Low'
+    END AS "Margin Tier"
+FROM ACCOUNTS A
+LEFT JOIN CLEANED_SALES S 
+    ON A.ACCOUNT = S.ACCOUNT 
+    AND S.YEAR = 2019 
+GROUP BY A.INDUSTRY
+-- Ordenar por el cálculo matemático directo, ya que "Beneficio total" ahora es texto (cadena).
+ORDER BY SUM(S.PROFIT) DESC NULLS LAST;
+
+--2020
+SELECT 
+    A.INDUSTRY,
+    -- Utilice COALESCE para convertir NULL en 0 antes de formatear.
+    TO_VARCHAR(COALESCE(SUM(S.PROFIT), 0), '999,999,999') AS "Total Profit",
+    TO_VARCHAR(COALESCE(SUM(S.TOTAL), 0), '999,999,999') AS "Total Sales",
+    -- Calcular margen
+    ROUND(COALESCE((SUM(S.PROFIT) / NULLIF(SUM(S.TOTAL), 0)) * 100, 0), 1) AS "Margin %",
+    CASE 
+        WHEN (SUM(S.PROFIT) / NULLIF(SUM(S.TOTAL), 0)) * 100 >= 36.0 THEN 'High'
+        WHEN (SUM(S.PROFIT) / NULLIF(SUM(S.TOTAL), 0)) * 100 >= 33.0 THEN 'Medium'
+        ELSE 'Low'
+    END AS "Margin Tier"
+FROM ACCOUNTS A
+LEFT JOIN CLEANED_SALES S 
+    ON A.ACCOUNT = S.ACCOUNT 
+    AND S.YEAR = 2020
+GROUP BY A.INDUSTRY
+-- Ordenar por el cálculo matemático directo, ya que "Beneficio total" ahora es texto (cadena).
+ORDER BY SUM(S.PROFIT) DESC NULLS LAST;
+
+--2021
+SELECT 
+    A.INDUSTRY,
+    -- Utilice COALESCE para convertir NULL en 0 antes de formatear.
+    TO_VARCHAR(COALESCE(SUM(S.PROFIT), 0), '999,999,999') AS "Total Profit",
+    TO_VARCHAR(COALESCE(SUM(S.TOTAL), 0), '999,999,999') AS "Total Sales",
+    -- Calcular margen
+    ROUND(COALESCE((SUM(S.PROFIT) / NULLIF(SUM(S.TOTAL), 0)) * 100, 0), 1) AS "Margin %",
+    CASE 
+        WHEN (SUM(S.PROFIT) / NULLIF(SUM(S.TOTAL), 0)) * 100 >= 36.0 THEN 'High'
+        WHEN (SUM(S.PROFIT) / NULLIF(SUM(S.TOTAL), 0)) * 100 >= 33.0 THEN 'Medium'
+        ELSE 'Low'
+    END AS "Margin Tier"
+FROM ACCOUNTS A
+LEFT JOIN CLEANED_SALES S 
+    ON A.ACCOUNT = S.ACCOUNT 
+    AND S.YEAR = 2021
+GROUP BY A.INDUSTRY
+-- Ordenar por el cálculo matemático directo, ya que "Beneficio total" ahora es texto (cadena).
+ORDER BY SUM(S.PROFIT) DESC NULLS LAST;
